@@ -13,7 +13,16 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -21,9 +30,37 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Api
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoFixHigh
+import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.RemoveModerator
+import androidx.compose.material.icons.outlined.WorkOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +105,7 @@ fun NewPatchScreen(
 ) {
     val viewModel = viewModel<NewPatchViewModel>()
     val snackbarHost = LocalSnackbarHost.current
+    val errorUnknown = stringResource(R.string.error_unknown)
     val storageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { apks ->
         if (apks.isEmpty()) {
             navigator.navigateUp()
@@ -76,14 +114,39 @@ fun NewPatchScreen(
         runBlocking {
             LSPPackageManager.getAppInfoFromApks(apks)
                 .onSuccess {
-                    viewModel.dispatch(ViewAction.ConfigurePatch(it))
+                    viewModel.dispatch(ViewAction.ConfigurePatch(it.first()))
                 }
                 .onFailure {
-                    lspApp.globalScope.launch { snackbarHost.showSnackbar(it.message ?: "Unknown error") }
+                    lspApp.globalScope.launch { snackbarHost.showSnackbar(it.message ?: errorUnknown) }
                     navigator.navigateUp()
                 }
         }
     }
+
+    var showSelectModuleDialog by remember { mutableStateOf(false) }
+    val noXposedModules = stringResource(R.string.patch_no_xposed_module)
+    val storageModuleLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { apks ->
+            if (apks.isEmpty()) {
+                return@rememberLauncherForActivityResult
+            }
+            runBlocking {
+                LSPPackageManager.getAppInfoFromApks(apks).onSuccess { it ->
+                    viewModel.embeddedModules = it.filter { it.isXposedModule }.ifEmpty {
+                        lspApp.globalScope.launch {
+                            snackbarHost.showSnackbar(noXposedModules)
+                        }
+                        return@onSuccess
+                    }
+                }.onFailure {
+                    lspApp.globalScope.launch {
+                        snackbarHost.showSnackbar(
+                            it.message ?: errorUnknown
+                        )
+                    }
+                }
+            }
+        }
 
     Log.d(TAG, "PatchState: ${viewModel.patchState}")
     when (viewModel.patchState) {
@@ -128,7 +191,7 @@ fun NewPatchScreen(
             ) { innerPadding ->
                 if (viewModel.patchState == PatchState.CONFIGURING) {
                     PatchOptionsBody(Modifier.padding(innerPadding)) {
-                        navigator.navigate(SelectAppsScreenDestination(true, viewModel.embeddedModules.mapTo(ArrayList()) { it.app.packageName }))
+                        showSelectModuleDialog = true
                     }
                     resultRecipient.onNavResult {
                         if (it is NavResult.Value) {
@@ -139,6 +202,53 @@ fun NewPatchScreen(
                 } else {
                     DoPatchBody(Modifier.padding(innerPadding), navigator)
                 }
+            }
+
+            if (showSelectModuleDialog) {
+                AlertDialog(onDismissRequest = { showSelectModuleDialog = false },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(content = { Text(stringResource(android.R.string.cancel)) },
+                            onClick = { showSelectModuleDialog = false })
+                    },
+                    title = {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = stringResource(R.string.patch_embed_modules),
+                            textAlign = TextAlign.Center
+                        )
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            TextButton(modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.secondary),
+                                onClick = {
+                                    storageModuleLauncher.launch(arrayOf("application/vnd.android.package-archive"))
+                                    showSelectModuleDialog = false
+                                }) {
+                                Text(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    text = stringResource(R.string.patch_from_storage),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                            TextButton(modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.secondary),
+                                onClick = {
+                                    navigator.navigate(
+                                        SelectAppsScreenDestination(true,
+                                            viewModel.embeddedModules.mapTo(ArrayList()) { it.app.packageName })
+                                    )
+                                    showSelectModuleDialog = false
+                                }) {
+                                Text(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    text = stringResource(R.string.patch_from_applist),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        }
+                    })
             }
         }
     }

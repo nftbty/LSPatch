@@ -152,10 +152,9 @@ object LSPPackageManager {
         return Pair(status, message)
     }
 
-    suspend fun getAppInfoFromApks(apks: List<Uri>): Result<AppInfo> {
+    suspend fun getAppInfoFromApks(apks: List<Uri>): Result<List<AppInfo>> {
         return withContext(Dispatchers.IO) {
             runCatching {
-                var primary: ApplicationInfo? = null
                 val splits = apks.mapNotNull { uri ->
                     val src = DocumentFile.fromSingleUri(lspApp, uri)
                         ?: throw IOException("DocumentFile is null")
@@ -167,21 +166,14 @@ object LSPPackageManager {
                             input.copyTo(output)
                         }
                     }
-                    if (primary == null) {
-                        primary = lspApp.packageManager.getPackageArchiveInfo(dst.absolutePath, 0)?.applicationInfo
-                        primary?.let {
-                            it.sourceDir = dst.absolutePath
-                            return@mapNotNull null
-                        }
-                    }
-                    dst.absolutePath
+                    val appInfo = lspApp.packageManager.getPackageArchiveInfo(
+                        dst.absolutePath, PackageManager.GET_META_DATA
+                    )?.applicationInfo ?: return@mapNotNull null
+                    val label = lspApp.packageManager.getApplicationLabel(appInfo).toString()
+                    AppInfo(appInfo, label)
                 }
-
-                // TODO: Check selected apks are from the same app
-                if (primary == null) throw IllegalArgumentException("No primary apk")
-                val label = lspApp.packageManager.getApplicationLabel(primary!!).toString()
-                if (splits.isNotEmpty()) primary!!.splitSourceDirs = splits.toTypedArray()
-                AppInfo(primary!!, label)
+                if (splits.isEmpty()) throw IOException("No apks")
+                splits
             }.recoverCatching { t ->
                 cleanTmpApkDir()
                 Log.e(TAG, "Failed to load apks", t)
