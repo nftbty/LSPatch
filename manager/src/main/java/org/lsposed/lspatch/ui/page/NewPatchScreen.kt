@@ -114,7 +114,7 @@ fun NewPatchScreen(
         runBlocking {
             LSPPackageManager.getAppInfoFromApks(apks)
                 .onSuccess {
-                    viewModel.dispatch(ViewAction.ConfigurePatch(it.first()))
+                    viewModel.dispatch(ViewAction.ConfigurePatch(it))
                 }
                 .onFailure {
                     lspApp.globalScope.launch { snackbarHost.showSnackbar(it.message ?: errorUnknown) }
